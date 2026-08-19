@@ -738,7 +738,7 @@ with tab5:
     with col1:
         st.subheader("Coverage Trend")
         trend_data = pd.DataFrame({
-            'Date': pd.date_range('2024-01-01', periods=12, freq='M'),
+            'Date': pd.date_range('2024-01-01', periods=12, freq='ME'),
             'Coverage %': [60, 62, 65, 68, 70, 72, 75, 76, 77, 78, 80, 82]
         })
         st.line_chart(trend_data.set_index('Date'))
