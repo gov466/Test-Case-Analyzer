@@ -506,15 +506,21 @@ with tab2:
                 # Gaps and Recommendations
                 st.subheader("Gaps & Recommendations")
                 
-                gaps = analysis.get('gaps', [])
-                recommendations = analysis.get('recommendations', [])
+                recommendations = analysis.get('recommendations', [
+                    "Link remaining requirements to Jira issues",
+                    "Document traceability in RTM",
+                    "Verify test case coverage"
+                ])
+                gaps_count = analysis.get('gaps', 0)
                 
                 col1, col2 = st.columns(2)
                 
                 with col1:
                     st.markdown("**🔴 Identified Gaps:**")
-                    for gap in gaps:
-                        st.markdown(f"- {gap}")
+                    if gaps_count > 0:
+                        st.markdown(f"- **{gaps_count} requirements** missing Jira links")
+                    else:
+                        st.markdown("✅ No gaps identified - full coverage!")
                 
                 with col2:
                     st.markdown("**✅ Recommendations:**")
