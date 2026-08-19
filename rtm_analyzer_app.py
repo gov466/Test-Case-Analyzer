@@ -108,15 +108,35 @@ def extract_jira_links(content: str, patterns: dict) -> dict:
 def generate_basic_analysis(content: str) -> dict:
     """Generate basic analysis without Claude"""
     
-    jira_links = len(re.findall(r'(PM2|HW|FW|SW)-\d+', content))
-    requirements = len(re.findall(r'[A-Z]{2,3}-\d+', content))
+    # Use 3+ digit patterns to avoid false positives
+    jira_links = len(re.findall(r'(PM2|HW|FW|SW)-\d{3,}', content))
+    requirements = len(re.findall(r'[A-Z]{2,3}-\d{3,}', content))
     
+    without_jira = requirements - jira_links
     coverage = (jira_links / requirements * 100) if requirements > 0 else 0
+    
+    # Determine ISO status based on coverage
+    if coverage >= 95:
+        iso_status = 'Compliant'
+        risk_level = 'Low'
+    elif coverage >= 70:
+        iso_status = 'Partial'
+        risk_level = 'Medium'
+    else:
+        iso_status = 'Non-Compliant'
+        risk_level = 'High'
     
     return {
         'total_requirements': requirements,
         'total_jira_links': jira_links,
-        'coverage_percent': coverage
+        'coverage_percent': round(coverage, 2),
+        'coverage_percentage': round(coverage, 2),
+        'iso_status': iso_status,
+        'risk_level': risk_level,
+        'gaps': without_jira,
+        'with_jira': jira_links,
+        'without_jira': without_jira,
+        'other': 0
     }
 
 # ============================================================================
