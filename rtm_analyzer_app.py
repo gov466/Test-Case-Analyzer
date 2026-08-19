@@ -308,10 +308,10 @@ with tab1:
                 
                 # Extract Jira links
                 jira_patterns = {
-                    'PM2': r'PM2-\d+',
-                    'HW': r'HW-\d+',
-                    'FW': r'FW-\d+',
-                    'SW': r'SW-\d+'
+                    'PM2': r'PM2-\d{3,}',
+                    'HW': r'HW-\d{3,}',
+                    'FW': r'FW-\d{3,}',
+                    'SW': r'SW-\d{3,}'
                 }
                 
                 results = extract_jira_links(content, jira_patterns)
@@ -654,10 +654,10 @@ with tab4:
                         try:
                             content = fetch_url_content(url, google_key, jira_user, jira_token)
                             result = extract_jira_links(content, {
-                                'PM2': r'PM2-\d+',
-                                'HW': r'HW-\d+',
-                                'FW': r'FW-\d+',
-                                'SW': r'SW-\d+'
+                                'PM2': r'PM2-\d{3,}',
+                                'HW': r'HW-\d{3,}',
+                                'FW': r'FW-\d{3,}',
+                                'SW': r'SW-\d{3,}'
                             })
                             result['url'] = url[:60] + '...' if len(url) > 60 else url
                             results_list.append(result)
