@@ -139,6 +139,37 @@ def generate_basic_analysis(content: str) -> dict:
         'other': 0
     }
 
+def generate_text_report(analysis: dict) -> str:
+    """Generate text format report"""
+    
+    report = f"""
+RTM ANALYSIS REPORT
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+EXECUTIVE SUMMARY
+=================
+Total Requirements: {analysis.get('total_requirements', 'N/A')}
+With Jira Links: {analysis.get('with_jira', 'N/A')}
+Coverage: {analysis.get('coverage_percentage', 'N/A')}%
+ISO Status: {analysis.get('iso_status', 'Unknown')}
+Risk Level: {analysis.get('risk_level', 'Unknown')}
+
+DETAILED ANALYSIS
+=================
+Requirements with Jira: {analysis.get('with_jira', 0)}
+Requirements without Jira: {analysis.get('without_jira', 0)}
+Total Gaps: {analysis.get('gaps', 0)}
+
+RECOMMENDATIONS
+===============
+- Link remaining requirements to Jira issues
+- Document traceability in RTM
+- Verify test case coverage
+
+END OF REPORT
+"""
+    return report
+
 # ============================================================================
 # PAGE CONFIG
 # ============================================================================
@@ -777,98 +808,10 @@ with tab5:
         })
         st.bar_chart(status_data.set_index('Status'))
 
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
-@st.cache_data
-def fetch_url_content(url: str, google_key: str, jira_user: str, jira_token: str) -> str:
-    """Fetch content from various URL types"""
-    
-    try:
-        # Google Sheets
-        if 'docs.google.com/spreadsheets' in url:
-            sheet_id = extract_google_id(url)
-            export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
-            response = requests.get(export_url, timeout=10)
-            return response.text
-        
-        # Google Docs
-        elif 'docs.google.com/document' in url:
-            doc_id = extract_google_id(url)
-            export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
-            response = requests.get(export_url, timeout=10)
-            return response.text
-        
-        # Confluence
-        elif 'confluence' in url:
-            api_url = url.replace('/display/', '/rest/api/content/')
-            api_url += '?expand=body.storage'
-            headers = {'Authorization': f'Bearer {jira_token}'}
-            response = requests.get(api_url, headers=headers, timeout=10)
-            return response.text
-        
-        # Jira JQL
-        elif 'atlassian.net' in url and 'jql' in url:
-            headers = {'Authorization': f'Basic {base64.b64encode(f"{jira_user}:{jira_token}".encode()).decode()}'}
-            response = requests.get(url, headers=headers, timeout=10)
-            return json.dumps(response.json())
-        
-        # GitHub
-        elif 'github.com' in url:
-            raw_url = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
-            response = requests.get(raw_url, timeout=10)
-            return response.text
-        
-        # Default HTTP
-        else:
-            response = requests.get(url, timeout=10)
-            return response.text
-    
-    except Exception as e:
-        st.error(f"Could not fetch URL: {str(e)}")
-        return ""
-
-def extract_google_id(url: str) -> str:
-    """Extract Google Sheets/Docs ID from URL"""
-    match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
-    return match.group(1) if match else ""
-
-def extract_jira_links(content: str, patterns: dict) -> dict:
-    """Extract and count Jira links from content"""
-    
-    all_issues = {}
-    projects = {}
-    slack_count = 0
-    
-    # Find all Jira links
-    for project, pattern in patterns.items():
-        matches = re.findall(pattern, content)
-        if matches:
-            projects[project] = len(set(matches))
-            for match in set(matches):
-                all_issues[match] = all_issues.get(match, 0) + 1
-    
-    # Find Slack references
-    slack_matches = re.findall(r'slack\.com|slack message', content, re.IGNORECASE)
-    slack_count = len(slack_matches) // 2  # Rough estimate
-    
-    return {
-        'total_links': len(all_issues),
-        'unique_issues': len(set(all_issues.keys())),
-        'projects_count': len(projects),
-        'slack_refs': slack_count,
-        'issues_breakdown': [
-            {'Project': p, 'Issues': c} for p, c in sorted(projects.items())
-        ],
-        'all_links': [[k, v] for k, v in sorted(all_issues.items())]
-    }
-
 
 # ============================================================================
 # RUN APP
 # ============================================================================
 
 if __name__ == "__main__":
-    # Verify API keys on startup
     pass
