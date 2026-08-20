@@ -112,10 +112,6 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
         # Read CSV
         df = pd.read_csv(StringIO(csv_content))
         
-        # Debug: Show detected columns
-        st.debug(f"CSV Columns: {list(df.columns)}")
-        st.debug(f"Total Rows: {len(df)}")
-        
         # Score each column to find requirements, Jira, and description
         column_scores = {}
         
