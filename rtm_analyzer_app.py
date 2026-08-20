@@ -247,6 +247,84 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
         st.error(traceback.format_exc())
         return {}
 
+def validate_test_coverage_with_claude(jira_issues: dict, test_cases: list, jira_url: str, jira_user: str, jira_token: str, anthropic_key: str) -> dict:
+    """Validate test coverage against Jira requirements using Claude"""
+    
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=anthropic_key)
+        
+        validation_results = {}
+        
+        for issue_key, count in jira_issues.items():
+            st.info(f"🔍 Validating {issue_key}...")
+            
+            # Fetch Jira issue details
+            try:
+                url = f"{jira_url}/rest/api/3/search?jql=key={issue_key}&fields=summary,description,customfield_10015"
+                response = requests.get(url, auth=(jira_user, jira_token), timeout=10)
+                issue_data = response.json()
+                
+                if issue_data.get('issues'):
+                    issue = issue_data['issues'][0]['fields']
+                    issue_summary = issue.get('summary', '')
+                    issue_description = issue.get('description', '')
+                    
+                    # Find related test cases
+                    related_tests = [tc for tc in test_cases if issue_key in str(tc)]
+                    
+                    # Ask Claude to validate coverage
+                    validation_prompt = f"""
+                    You are a QA expert. Analyze if test cases adequately cover this Jira requirement:
+                    
+                    JIRA ISSUE: {issue_key}
+                    Title: {issue_summary}
+                    Description: {issue_description}
+                    
+                    RELATED TEST CASES ({len(related_tests)} found):
+                    {chr(10).join([str(tc) for tc in related_tests[:5]])}
+                    
+                    ANALYZE:
+                    1. Are test cases covering all acceptance criteria? (Yes/No)
+                    2. What's MISSING? (list gaps)
+                    3. What's REDUNDANT? (if any)
+                    4. Risk level? (Low/Medium/High)
+                    5. Recommended fixes?
+                    
+                    Format as JSON with keys: coverage_adequate, gaps, redundancy, risk_level, recommendations
+                    """
+                    
+                    message = client.messages.create(
+                        model="claude-opus-4-6",
+                        max_tokens=1000,
+                        messages=[
+                            {"role": "user", "content": validation_prompt}
+                        ]
+                    )
+                    
+                    # Parse Claude response
+                    response_text = message.content[0].text
+                    try:
+                        validation_results[issue_key] = json.loads(response_text)
+                    except:
+                        validation_results[issue_key] = {
+                            'analysis': response_text,
+                            'status': 'parsed_as_text'
+                        }
+                    
+                    st.success(f"✅ {issue_key} validated!")
+                else:
+                    validation_results[issue_key] = {'error': 'Issue not found in Jira'}
+                    
+            except Exception as e:
+                validation_results[issue_key] = {'error': str(e)}
+        
+        return validation_results
+    
+    except Exception as e:
+        st.error(f"Validation error: {str(e)}")
+        return {}
+
 def generate_text_report(analysis: dict) -> str:
     """Generate text format report"""
     
@@ -572,6 +650,52 @@ with tab1:
                     )
                 else:
                     st.success("✅ All requirements have Jira links!")
+                
+                # NEW: Claude Test Case Validation
+                if jira_token and jira_user and results.get('found_issues') and anthropic_key:
+                    st.divider()
+                    st.subheader("🤖 AI Test Case Validation (Claude)")
+                    st.info("💡 Claude will analyze each Jira issue and verify if test cases adequately cover the requirements. This may take 30-60 seconds.")
+                    
+                    if st.button("🚀 Start AI Validation", key="claude_validation"):
+                        with st.spinner("🔄 Validating test coverage with Claude..."):
+                            # Get test cases from content
+                            test_cases = re.findall(r'(TC-\d+|Test Case \d+|TC\d+)', content, re.IGNORECASE)
+                            
+                            # Run validation
+                            validation_results = validate_test_coverage_with_claude(
+                                results['found_issues'],
+                                test_cases,
+                                jira_url,
+                                jira_user,
+                                jira_token,
+                                anthropic_key
+                            )
+                            
+                            if validation_results:
+                                st.success("✅ Validation Complete!")
+                                
+                                # Display results
+                                for issue_key, validation in validation_results.items():
+                                    with st.expander(f"📋 {issue_key} - Validation Details", expanded=False):
+                                        if 'error' in validation:
+                                            st.error(f"Error: {validation['error']}")
+                                        else:
+                                            # Display validation results
+                                            if isinstance(validation, dict):
+                                                for key, value in validation.items():
+                                                    if key == 'gaps':
+                                                        st.warning(f"⚠️ **Gaps Found:**\n{value if isinstance(value, str) else chr(10).join(value)}")
+                                                    elif key == 'coverage_adequate':
+                                                        status = "✅ ADEQUATE" if value else "❌ INADEQUATE"
+                                                        st.markdown(f"**Coverage:** {status}")
+                                                    elif key == 'risk_level':
+                                                        color = "🟢" if value == "Low" else "🟡" if value == "Medium" else "🔴"
+                                                        st.markdown(f"**Risk Level:** {color} {value}")
+                                                    elif key == 'recommendations':
+                                                        st.info(f"💡 **Recommendations:**\n{value if isinstance(value, str) else chr(10).join(value)}")
+                                            else:
+                                                st.write(validation)
                 
                 # Advanced: Check for test cases in Jira (if credentials available)
                 if jira_token and jira_user and results.get('found_issues'):
