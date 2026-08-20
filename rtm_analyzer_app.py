@@ -106,7 +106,7 @@ def extract_jira_links(content: str, patterns: dict) -> dict:
     }
 
 def analyze_rtm_by_columns(csv_content: str) -> dict:
-    """Analyze RTM with intelligent content-based column detection"""
+    """Analyze RTM with intelligent content-based column detection - FIXED empty cell handling"""
     
     try:
         # Read CSV
@@ -119,16 +119,17 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
             req_score = 0
             jira_score = 0
             desc_score = 0
-            empty_count = 0
+            jira_empty_count = 0
             
             col_values = df[col].astype(str)
-            total_non_empty = (col_values != 'nan').sum()
+            total_rows = len(df)
             
             for val in col_values:
                 val_str = str(val).strip()
                 
+                # Count empty/nan cells
                 if val_str == 'nan' or val_str == '':
-                    empty_count += 1
+                    jira_empty_count += 1
                     continue
                 
                 # Score for Jira patterns
@@ -136,36 +137,43 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
                     jira_score += 1
                 
                 # Score for requirement patterns
-                if re.search(r'(REQ|REQUIREMENT|TEST CASE|TC-)', val_str, re.IGNORECASE):
+                if re.search(r'(REQ|REQUIREMENT|TEST CASE|TC-|ID)', val_str, re.IGNORECASE):
                     req_score += 1
                 
-                # Score for description (longer text)
-                if len(val_str) > 30:
+                # Score for description (longer text, no Jira patterns)
+                if len(val_str) > 30 and not re.search(r'(PM2|HW|FW|SW|TC)-\d{2,}', val_str):
                     desc_score += 1
             
-            # Normalize by non-empty rows
-            if total_non_empty > 0:
-                column_scores[col] = {
-                    'jira_score': jira_score / total_non_empty,
-                    'req_score': req_score / total_non_empty,
-                    'desc_score': desc_score / total_non_empty,
-                    'empty_ratio': empty_count / len(df),
-                    'total_score': (jira_score + req_score + desc_score) / total_non_empty
-                }
+            # Store all scores
+            column_scores[col] = {
+                'jira_score': jira_score,
+                'req_score': req_score,
+                'desc_score': desc_score,
+                'empty_count': jira_empty_count,
+                'total_patterns': jira_score + req_score + desc_score
+            }
         
-        # Find best columns
-        best_jira_col = max([c for c in column_scores.items() if c[1]['jira_score'] > 0], 
-                           key=lambda x: x[1]['jira_score'], default=None)
-        best_req_col = max([c for c in column_scores.items() if c[1]['req_score'] > 0], 
-                          key=lambda x: x[1]['req_score'], default=None)
-        best_desc_col = max([c for c in column_scores.items() if c[1]['desc_score'] > 0], 
-                           key=lambda x: x[1]['desc_score'], default=None)
+        # Find best columns by highest pattern count
+        jira_col = None
+        req_col = None
+        desc_col = None
         
-        jira_col = best_jira_col[0] if best_jira_col else None
-        req_col = best_req_col[0] if best_req_col else None
-        desc_col = best_desc_col[0] if best_desc_col else None
+        # Find Jira column (highest jira_score)
+        if any(s['jira_score'] > 0 for s in column_scores.values()):
+            jira_col = max([c for c in column_scores.items() if c[1]['jira_score'] > 0], 
+                          key=lambda x: x[1]['jira_score'])[0]
         
-        # If no good matches found, try first few columns by position
+        # Find Req column (highest req_score)
+        if any(s['req_score'] > 0 for s in column_scores.values()):
+            req_col = max([c for c in column_scores.items() if c[1]['req_score'] > 0], 
+                         key=lambda x: x[1]['req_score'])[0]
+        
+        # Find Desc column (highest desc_score)
+        if any(s['desc_score'] > 0 for s in column_scores.values()):
+            desc_col = max([c for c in column_scores.items() if c[1]['desc_score'] > 0], 
+                          key=lambda x: x[1]['desc_score'])[0]
+        
+        # Fallback to position if not found
         if not req_col and len(df.columns) > 0:
             req_col = df.columns[0]
         if not jira_col and len(df.columns) > 1:
@@ -173,9 +181,10 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
         if not desc_col and len(df.columns) > 2:
             desc_col = df.columns[2]
         
-        st.info(f"📊 **Column Detection**: Requirements: `{req_col}` | Jira Links: `{jira_col}` | Description: `{desc_col}`")
+        # Show detection results
+        st.info(f"📊 **Smart Detection**: Req ID: `{req_col}` | Jira Links: `{jira_col}` | Description: `{desc_col}`")
         
-        # Analyze row by row
+        # Analyze row by row - CAREFULLY HANDLE EMPTY CELLS
         total_requirements = 0
         with_jira = 0
         without_jira = 0
@@ -183,30 +192,33 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
         found_issues = {}
         
         for idx, row in df.iterrows():
-            # Get values safely
+            # Get values
             req_value = str(row[req_col]).strip() if req_col and req_col in row.index else ''
             jira_value = str(row[jira_col]).strip() if jira_col and jira_col in row.index else ''
             desc_value = str(row[desc_col]).strip() if desc_col and desc_col in row.index else ''
             
-            # Skip empty rows
+            # Skip if NO requirement ID
             if not req_value or req_value.lower() == 'nan' or req_value == '':
                 continue
             
-            # Skip header-like rows (rows with column names)
-            if any(x in req_value.lower() for x in ['requirement', 'test case', 'description', 'jira', 'id']):
+            # Skip header-like rows
+            if any(x in req_value.lower() for x in ['requirement', 'test case', 'description', 'jira', 'id', 'ref']):
                 continue
             
+            # This is a valid requirement row
             total_requirements += 1
             
-            # Check if has Jira link
+            # NOW check Jira column - EMPTY CELLS COUNT AS "WITHOUT JIRA"!
             if jira_value and jira_value != 'nan' and jira_value != '':
+                # Has Jira link
                 with_jira += 1
                 
-                # Extract issue keys
+                # Extract all issue keys
                 issues = re.findall(r'(PM2|HW|FW|SW|TC)-\d{2,}', jira_value)
                 for issue in issues:
                     found_issues[issue] = found_issues.get(issue, 0) + 1
             else:
+                # NO Jira link (empty cell!)
                 without_jira += 1
                 missing_jira_rows.append({
                     'row': idx + 2,
@@ -250,6 +262,8 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
     
     except Exception as e:
         st.error(f"Error analyzing RTM: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
         return {}
 
 def generate_text_report(analysis: dict) -> str:
