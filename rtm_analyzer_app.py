@@ -108,9 +108,9 @@ def extract_jira_links(content: str, patterns: dict) -> dict:
 def generate_basic_analysis(content: str) -> dict:
     """Generate basic analysis without Claude"""
     
-    # Use 3+ digit patterns to avoid false positives
-    jira_links = len(re.findall(r'(PM2|HW|FW|SW)-\d{3,}', content))
-    requirements = len(re.findall(r'[A-Z]{2,3}-\d{3,}', content))
+    # Use 2+ digit patterns to count all issues including 2,3,4+ digits
+    jira_links = len(re.findall(r'(PM2|HW|FW|SW)-\d{2,}', content))
+    requirements = len(re.findall(r'[A-Z]{2,3}-\d{2,}', content))
     
     without_jira = requirements - jira_links
     coverage = (jira_links / requirements * 100) if requirements > 0 else 0
@@ -169,6 +169,60 @@ RECOMMENDATIONS
 END OF REPORT
 """
     return report
+
+def query_jira_for_testcases(jira_url: str, jira_user: str, jira_token: str, jira_issues: list) -> dict:
+    """Query Jira API to check if each issue has linked test cases"""
+    
+    results = {
+        'issues_with_tests': [],
+        'issues_without_tests': [],
+        'api_errors': []
+    }
+    
+    if not jira_token or not jira_user:
+        return results
+    
+    for issue_key in jira_issues:
+        try:
+            # Query Jira for the issue
+            url = f"{jira_url}/rest/api/3/search?jql=key={issue_key}"
+            headers = {
+                'Authorization': f'Basic {base64.b64encode(f"{jira_user}:{jira_token}".encode()).decode()}',
+                'Accept': 'application/json'
+            }
+            
+            response = requests.get(url, headers=headers, timeout=5)
+            
+            if response.status_code == 200:
+                issue_data = response.json()
+                if issue_data.get('issues'):
+                    issue = issue_data['issues'][0]
+                    
+                    # Check for linked test cases in fields
+                    has_test_cases = False
+                    
+                    # Check common test case link patterns
+                    linked_issues = issue.get('fields', {}).get('issuelinks', [])
+                    for link in linked_issues:
+                        link_type = link.get('type', {}).get('name', '').lower()
+                        if 'test' in link_type or 'relates' in link_type:
+                            has_test_cases = True
+                            break
+                    
+                    # Check in description for test references
+                    description = issue.get('fields', {}).get('description', '').lower()
+                    if 'test' in description or 'tc-' in description:
+                        has_test_cases = True
+                    
+                    if has_test_cases:
+                        results['issues_with_tests'].append(issue_key)
+                    else:
+                        results['issues_without_tests'].append(issue_key)
+        
+        except Exception as e:
+            results['api_errors'].append(f"{issue_key}: {str(e)}")
+    
+    return results
 
 # ============================================================================
 # PAGE CONFIG
@@ -359,10 +413,10 @@ with tab1:
                 
                 # Extract Jira links
                 jira_patterns = {
-                    'PM2': r'PM2-\d{3,}',
-                    'HW': r'HW-\d{3,}',
-                    'FW': r'FW-\d{3,}',
-                    'SW': r'SW-\d{3,}'
+                    'PM2': r'PM2-\d{2,}',
+                    'HW': r'HW-\d{2,}',
+                    'FW': r'FW-\d{2,}',
+                    'SW': r'SW-\d{2,}'
                 }
                 
                 results = extract_jira_links(content, jira_patterns)
@@ -391,6 +445,38 @@ with tab1:
                 with st.expander("View all Jira links", expanded=False):
                     links_df = pd.DataFrame(results['all_links'], columns=['Link', 'Count'])
                     st.dataframe(links_df, use_container_width=True, hide_index=True)
+                
+                # Advanced: Check for test cases in Jira (if credentials available)
+                if jira_token and jira_user:
+                    st.divider()
+                    with st.expander("🧪 Test Case Verification (from Jira)", expanded=False):
+                        st.info("Checking Jira for linked test cases... this may take a moment")
+                        
+                        # Extract all Jira issue keys
+                        all_issues = [link[0] for link in results['all_links']]
+                        
+                        if all_issues:
+                            # Query Jira for test cases
+                            test_results = query_jira_for_testcases(jira_url, jira_user, jira_token, all_issues)
+                            
+                            # Show results
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.success(f"✅ Issues WITH Test Cases: {len(test_results['issues_with_tests'])}")
+                                if test_results['issues_with_tests']:
+                                    for issue in test_results['issues_with_tests']:
+                                        st.markdown(f"- {issue}")
+                            
+                            with col2:
+                                st.error(f"❌ Issues WITHOUT Test Cases: {len(test_results['issues_without_tests'])}")
+                                if test_results['issues_without_tests']:
+                                    for issue in test_results['issues_without_tests']:
+                                        st.markdown(f"- {issue} ← **REAL GAP**")
+                            
+                            # Show API errors if any
+                            if test_results['api_errors']:
+                                st.warning(f"⚠️ {len(test_results['api_errors'])} API errors")
                 
                 # Download options
                 st.divider()
@@ -711,10 +797,10 @@ with tab4:
                         try:
                             content = fetch_url_content(url, google_key, jira_user, jira_token)
                             result = extract_jira_links(content, {
-                                'PM2': r'PM2-\d{3,}',
-                                'HW': r'HW-\d{3,}',
-                                'FW': r'FW-\d{3,}',
-                                'SW': r'SW-\d{3,}'
+                                'PM2': r'PM2-\d{2,}',
+                                'HW': r'HW-\d{2,}',
+                                'FW': r'FW-\d{2,}',
+                                'SW': r'SW-\d{2,}'
                             })
                             result['url'] = url[:60] + '...' if len(url) > 60 else url
                             results_list.append(result)
