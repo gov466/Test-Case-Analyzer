@@ -113,37 +113,69 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
         df = pd.read_csv(StringIO(csv_content))
         
         # STEP 1: Find the requirements section header row
-        # Look for "Req ID", "Description", "Ref" pattern - FIRST occurrence!
+        # Strategy: Find ALL headers, then use the one with MOST requirements following it
         req_header_row = None
         req_col_idx = None
         desc_col_idx = None
         ref_col_idx = None
         
+        potential_headers = []
+        
+        # PASS 1: Find all candidate headers
         for idx, row in df.iterrows():
             row_values = [str(x).lower() if pd.notna(x) else '' for x in row.values]
             row_str = ' '.join(row_values)
             
             # Check if this row has the requirement header pattern
             if 'req id' in row_str or ('req' in row_str and 'description' in row_str and 'ref' in row_str):
-                req_header_row = idx
+                potential_headers.append((idx, row))
+        
+        # PASS 2: For each header, count how many requirements follow
+        best_header = None
+        best_count = 0
+        
+        for header_idx, header_row in potential_headers:
+            req_count = 0
+            
+            # Count requirements after this header
+            for check_idx in range(header_idx + 1, len(df)):
+                check_row = df.iloc[check_idx]
+                first_val = str(check_row.iloc[0]).strip() if pd.notna(check_row.iloc[0]) else ''
                 
-                # Find exact column positions - be flexible!
-                for col_idx, val in enumerate(row.values):
-                    val_str = str(val).lower() if pd.notna(val) else ''
-                    
-                    # Match Req ID column (can be 'Req ID', 'Req', 'ID', 'Requirement ID', etc.)
-                    if any(x in val_str for x in ['req id', 'requirement id', 'req_id']) and req_col_idx is None:
-                        req_col_idx = col_idx
-                    
-                    # Match Description column
-                    if 'description' in val_str and desc_col_idx is None:
-                        desc_col_idx = col_idx
-                    
-                    # Match Ref/Jira column
-                    if val_str == 'ref' or val_str == 'jira' and ref_col_idx is None:
-                        ref_col_idx = col_idx
+                # Stop if we hit another empty section
+                if not first_val or first_val.lower() == 'nan':
+                    continue
                 
-                break  # FIRST header only!
+                # If it looks like a requirement ID, count it
+                if any(x in first_val.lower() for x in ['sw-', 'fw-', 'hw-', 'pm2-', 'sp-', 'me-', 'cn-', 'wp-']):
+                    req_count += 1
+                elif len(first_val) > 0 and first_val not in ['Req ID', 'req id', 'Requirement ID']:
+                    req_count += 1
+            
+            if req_count > best_count:
+                best_count = req_count
+                best_header = (header_idx, header_row)
+        
+        if best_header:
+            req_header_row, header_row = best_header
+            
+            # Find exact column positions from the best header
+            for col_idx, val in enumerate(header_row.values):
+                val_str = str(val).lower() if pd.notna(val) else ''
+                
+                # Match Req ID column
+                if any(x in val_str for x in ['req id', 'requirement id', 'req_id']) and req_col_idx is None:
+                    req_col_idx = col_idx
+                
+                # Match Description column
+                if 'description' in val_str and desc_col_idx is None:
+                    desc_col_idx = col_idx
+                
+                # Match Ref/Jira column
+                if val_str == 'ref' or val_str == 'jira' and ref_col_idx is None:
+                    ref_col_idx = col_idx
+            
+            st.info(f"✅ Found requirements section with ~{best_count} requirements")
         
         # If header not found, try content-based fallback
         if req_header_row is None:
