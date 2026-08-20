@@ -106,11 +106,15 @@ def extract_jira_links(content: str, patterns: dict) -> dict:
     }
 
 def analyze_rtm_by_columns(csv_content: str) -> dict:
-    """Analyze RTM with intelligent content-based column detection - FIXED empty cell handling"""
+    """Analyze RTM with intelligent content-based column detection - FIXED row numbering and gap detection"""
     
     try:
         # Read CSV
         df = pd.read_csv(StringIO(csv_content))
+        
+        # Debug: Show detected columns
+        st.debug(f"CSV Columns: {list(df.columns)}")
+        st.debug(f"Total Rows: {len(df)}")
         
         # Score each column to find requirements, Jira, and description
         column_scores = {}
@@ -181,10 +185,11 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
         if not desc_col and len(df.columns) > 2:
             desc_col = df.columns[2]
         
-        # Show detection results
-        st.info(f"📊 **Smart Detection**: Req ID: `{req_col}` | Jira Links: `{jira_col}` | Description: `{desc_col}`")
+        # Show detection results - NO EMOJI
+        detection_msg = f"**Detected Columns:** Req ID: `{req_col}` | Jira Links: `{jira_col}` | Description: `{desc_col}`"
+        st.info(detection_msg)
         
-        # Analyze row by row - CAREFULLY HANDLE EMPTY CELLS
+        # Analyze row by row - COUNT EVERY ROW CAREFULLY
         total_requirements = 0
         with_jira = 0
         without_jira = 0
@@ -201,12 +206,16 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
             if not req_value or req_value.lower() == 'nan' or req_value == '':
                 continue
             
-            # Skip header-like rows
-            if any(x in req_value.lower() for x in ['requirement', 'test case', 'description', 'jira', 'id', 'ref']):
+            # Skip header-like rows (check if row looks like a header)
+            if any(x in req_value.lower() for x in ['requirement', 'test case', 'description', 'jira', 'req id', 'ref']):
                 continue
             
             # This is a valid requirement row
             total_requirements += 1
+            
+            # Excel row number = dataframe index + 2 (for header + 1-indexing)
+            # BUT we need to verify this matches the actual file
+            excel_row = idx + 2
             
             # NOW check Jira column - EMPTY CELLS COUNT AS "WITHOUT JIRA"!
             if jira_value and jira_value != 'nan' and jira_value != '':
@@ -218,11 +227,12 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
                 for issue in issues:
                     found_issues[issue] = found_issues.get(issue, 0) + 1
             else:
-                # NO Jira link (empty cell!)
+                # NO Jira link (empty cell!) - RECORD THIS
                 without_jira += 1
                 missing_jira_rows.append({
-                    'row': idx + 2,
+                    'row': excel_row,
                     'requirement': req_value[:60],
+                    'ref_value': jira_value[:60] if jira_value else '(empty)',
                     'description': desc_value[:100]
                 })
         
@@ -570,13 +580,15 @@ with tab1:
                 else:
                     st.info("No Jira issues found")
                 
-                # CRITICAL: Show missing Jira links (REAL GAPS)
+                # CRITICAL: Show missing Jira links (REAL GAPS) - SHOW ALL!
                 st.divider()
-                st.subheader("❌ GAPS: Requirements WITHOUT Jira Links")
+                st.subheader(f"❌ GAPS: {results.get('without_jira', 0)} Requirements WITHOUT Jira Links")
                 
                 if results.get('missing_jira_rows'):
                     missing_df = pd.DataFrame(results['missing_jira_rows'])
                     st.warning(f"⚠️ {len(results['missing_jira_rows'])} requirements missing Jira links!")
+                    
+                    # Show all gaps - NO LIMIT
                     st.dataframe(missing_df, use_container_width=True, hide_index=True)
                     
                     # Download gaps as CSV
