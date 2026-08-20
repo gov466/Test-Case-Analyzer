@@ -113,29 +113,37 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
         df = pd.read_csv(StringIO(csv_content))
         
         # STEP 1: Find the requirements section header row
-        # Look for "Req ID", "Description", "Ref" pattern
+        # Look for "Req ID", "Description", "Ref" pattern - FIRST occurrence!
         req_header_row = None
         req_col_idx = None
         desc_col_idx = None
         ref_col_idx = None
         
         for idx, row in df.iterrows():
-            row_str = ' '.join(str(x).lower() for x in row.values if pd.notna(x))
+            row_values = [str(x).lower() if pd.notna(x) else '' for x in row.values]
+            row_str = ' '.join(row_values)
             
             # Check if this row has the requirement header pattern
-            if 'req id' in row_str and 'description' in row_str and 'ref' in row_str:
+            if 'req id' in row_str or ('req' in row_str and 'description' in row_str and 'ref' in row_str):
                 req_header_row = idx
                 
-                # Find exact column positions
+                # Find exact column positions - be flexible!
                 for col_idx, val in enumerate(row.values):
                     val_str = str(val).lower() if pd.notna(val) else ''
-                    if 'req' in val_str and 'id' in val_str and req_col_idx is None:
+                    
+                    # Match Req ID column (can be 'Req ID', 'Req', 'ID', 'Requirement ID', etc.)
+                    if any(x in val_str for x in ['req id', 'requirement id', 'req_id']) and req_col_idx is None:
                         req_col_idx = col_idx
+                    
+                    # Match Description column
                     if 'description' in val_str and desc_col_idx is None:
                         desc_col_idx = col_idx
-                    if val_str == 'ref' and ref_col_idx is None:
+                    
+                    # Match Ref/Jira column
+                    if val_str == 'ref' or val_str == 'jira' and ref_col_idx is None:
                         ref_col_idx = col_idx
-                break
+                
+                break  # FIRST header only!
         
         # If header not found, try content-based fallback
         if req_header_row is None:
@@ -652,12 +660,15 @@ with tab1:
                     st.success("✅ All requirements have Jira links!")
                 
                 # NEW: Claude Test Case Validation
-                if jira_token and jira_user and results.get('found_issues') and anthropic_key:
+                if results.get('found_issues') and anthropic_key:
                     st.divider()
                     st.subheader("🤖 AI Test Case Validation (Claude)")
-                    st.info("💡 Claude will analyze each Jira issue and verify if test cases adequately cover the requirements. This may take 30-60 seconds.")
+                    st.info("💡 Claude will analyze each Jira issue and verify if test cases adequately cover the requirements.")
                     
                     if st.button("🚀 Start AI Validation", key="claude_validation"):
+                        if not jira_token or not jira_user:
+                            st.warning("⚠️ Jira credentials needed for full analysis. Showing Claude insights anyway...")
+                        
                         with st.spinner("🔄 Validating test coverage with Claude..."):
                             # Get test cases from content
                             test_cases = re.findall(r'(TC-\d+|Test Case \d+|TC\d+)', content, re.IGNORECASE)
@@ -696,6 +707,8 @@ with tab1:
                                                         st.info(f"💡 **Recommendations:**\n{value if isinstance(value, str) else chr(10).join(value)}")
                                             else:
                                                 st.write(validation)
+                elif results.get('found_issues') and not anthropic_key:
+                    st.warning("⚠️ Enter your **Anthropic API Key** in the sidebar to enable AI Test Case Validation")
                 
                 # Advanced: Check for test cases in Jira (if credentials available)
                 if jira_token and jira_user and results.get('found_issues'):
