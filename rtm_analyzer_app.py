@@ -147,8 +147,9 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
         
         for idx, row in df.iterrows():
             # Check if row has requirement
-            req_value = str(row.get(req_col, '')).strip() if req_col else ''
-            jira_value = str(row.get(jira_col, '')).strip() if jira_col else ''
+            req_value = str(row[req_col]).strip() if req_col and req_col in row.index else ''
+            jira_value = str(row[jira_col]).strip() if jira_col and jira_col in row.index else ''
+            desc_value = str(row[desc_col]).strip() if desc_col and desc_col in row.index else ''
             
             # Skip empty rows
             if not req_value or req_value.lower() == 'nan' or req_value == '':
@@ -173,7 +174,7 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
                 missing_jira_rows.append({
                     'row': idx + 2,  # +2 for 1-indexed and header
                     'requirement': req_value[:50],
-                    'description': row.get(desc_col, '')[:100] if desc_col else ''
+                    'description': desc_value[:100]
                 })
         
         # Calculate coverage
@@ -621,37 +622,12 @@ with tab2:
             with st.spinner("🔄 Generating detailed report..."):
                 content = fetch_url_content(url_detailed, google_key, jira_user, jira_token)
                 
-                # Use Claude for intelligent analysis
-                if anthropic_key:
-                    client = anthropic.Anthropic(api_key=anthropic_key)
-                    
-                    analysis_prompt = f"""
-                    Analyze this Requirements Traceability Matrix content for compliance:
-                    
-                    {content[:5000]}  # First 5000 chars
-                    
-                    Provide:
-                    1. Total requirements count
-                    2. Requirements with Jira links (count & percentage)
-                    3. Requirements without links
-                    4. ISO 9001:2015 compliance assessment
-                    5. Key gaps and recommendations
-                    6. Risk assessment (Low/Medium/High)
-                    
-                    Format as JSON.
-                    """
-                    
-                    message = client.messages.create(
-                        model="claude-opus-4-6",
-                        max_tokens=2000,
-                        messages=[
-                            {"role": "user", "content": analysis_prompt}
-                        ]
-                    )
-                    
-                    analysis = json.loads(message.content[0].text)
-                else:
-                    analysis = generate_basic_analysis(content)
+                # Analyze using smart column detection
+                analysis = analyze_rtm_by_columns(content)
+                
+                if not analysis:
+                    st.error("Could not analyze document. Check URL format.")
+                    st.stop()
                 
                 # Display report
                 st.success("✅ Report Generated!")
