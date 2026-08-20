@@ -112,70 +112,82 @@ def analyze_rtm_by_columns(csv_content: str) -> dict:
         # Read CSV
         df = pd.read_csv(StringIO(csv_content))
         
-        # STEP 1: Find the requirements section header row
-        # Strategy: Find ALL headers, then use the one with MOST requirements following it
-        req_header_row = None
+        # STEP 1: Smart Column Detection - Look for actual Jira link patterns
+        # Don't rely on headers; look for actual data patterns!
+        
         req_col_idx = None
-        desc_col_idx = None
         ref_col_idx = None
+        desc_col_idx = None
         
-        potential_headers = []
-        
-        # PASS 1: Find all candidate headers
-        for idx, row in df.iterrows():
-            row_values = [str(x).lower() if pd.notna(x) else '' for x in row.values]
-            row_str = ' '.join(row_values)
+        # PASS 1: Find which columns have Jira patterns (PM2-, HW-, etc.)
+        jira_pattern_cols = {}
+        for col_idx, col in enumerate(df.columns):
+            col_values = df[col].astype(str)
+            jira_count = 0
+            url_count = 0
             
-            # Check if this row has the requirement header pattern
-            if 'req id' in row_str or ('req' in row_str and 'description' in row_str and 'ref' in row_str):
-                potential_headers.append((idx, row))
+            for val in col_values:
+                val_str = str(val).strip()
+                # Count Jira issue patterns
+                if 'PM2-' in val_str or 'HW-' in val_str or 'FW-' in val_str or 'SW-' in val_str:
+                    jira_count += 1
+                # Count URLs (usually contain Jira links)
+                if 'etcengineering.atlassian.net' in val_str or 'browse/' in val_str:
+                    url_count += 1
+            
+            if jira_count > 5 or url_count > 5:
+                jira_pattern_cols[col_idx] = jira_count + url_count
         
-        # PASS 2: For each header, count how many requirements follow
-        best_header = None
-        best_count = 0
+        if jira_pattern_cols:
+            ref_col_idx = max(jira_pattern_cols, key=jira_pattern_cols.get)
+            st.info(f"✅ Found Jira Links column (column {ref_col_idx})")
         
-        for header_idx, header_row in potential_headers:
+        # PASS 2: Find requirement ID column (SW-, FW-, HW-, PM2-, etc.)
+        req_pattern_cols = {}
+        for col_idx, col in enumerate(df.columns):
+            col_values = df[col].astype(str)
             req_count = 0
             
-            # Count requirements after this header
-            for check_idx in range(header_idx + 1, len(df)):
-                check_row = df.iloc[check_idx]
-                first_val = str(check_row.iloc[0]).strip() if pd.notna(check_row.iloc[0]) else ''
-                
-                # Stop if we hit another empty section
-                if not first_val or first_val.lower() == 'nan':
-                    continue
-                
-                # If it looks like a requirement ID, count it
-                if any(x in first_val.lower() for x in ['sw-', 'fw-', 'hw-', 'pm2-', 'sp-', 'me-', 'cn-', 'wp-']):
-                    req_count += 1
-                elif len(first_val) > 0 and first_val not in ['Req ID', 'req id', 'Requirement ID']:
+            for val in col_values:
+                val_str = str(val).strip()
+                # Count requirement ID patterns
+                if any(x in val_str for x in ['SW-', 'FW-', 'HW-', 'PM2-', 'SP-', 'ME-', 'CN-', 'WP-', 'BM-', 'A-']):
                     req_count += 1
             
-            if req_count > best_count:
-                best_count = req_count
-                best_header = (header_idx, header_row)
+            if req_count > 5:
+                req_pattern_cols[col_idx] = req_count
         
-        if best_header:
-            req_header_row, header_row = best_header
+        if req_pattern_cols:
+            req_col_idx = max(req_pattern_cols, key=req_pattern_cols.get)
+            st.info(f"✅ Found Requirement ID column (column {req_col_idx})")
+        
+        # PASS 3: Find description column (longest text)
+        desc_pattern_cols = {}
+        for col_idx, col in enumerate(df.columns):
+            col_values = df[col].astype(str)
+            long_text_count = 0
+            avg_len = 0
             
-            # Find exact column positions from the best header
-            for col_idx, val in enumerate(header_row.values):
-                val_str = str(val).lower() if pd.notna(val) else ''
-                
-                # Match Req ID column
-                if any(x in val_str for x in ['req id', 'requirement id', 'req_id']) and req_col_idx is None:
-                    req_col_idx = col_idx
-                
-                # Match Description column
-                if 'description' in val_str and desc_col_idx is None:
-                    desc_col_idx = col_idx
-                
-                # Match Ref/Jira column
-                if val_str == 'ref' or val_str == 'jira' and ref_col_idx is None:
-                    ref_col_idx = col_idx
+            for val in col_values:
+                val_str = str(val).strip()
+                if len(val_str) > 30:
+                    long_text_count += 1
+                    avg_len += len(val_str)
             
-            st.info(f"✅ Found requirements section with ~{best_count} requirements")
+            if long_text_count > 10:
+                desc_pattern_cols[col_idx] = avg_len / long_text_count if long_text_count > 0 else 0
+        
+        if desc_pattern_cols:
+            desc_col_idx = max(desc_pattern_cols, key=desc_pattern_cols.get)
+            st.info(f"✅ Found Description column (column {desc_col_idx})")
+        
+        # If still no columns found, use fallback
+        if not req_col_idx or not ref_col_idx:
+            st.warning("⚠️ Could not detect columns reliably. Using fallback detection...")
+            req_col_idx = 0
+            ref_col_idx = 1
+        
+        req_header_row = 0  # No header row to skip
         
         # If header not found, try content-based fallback
         if req_header_row is None:
